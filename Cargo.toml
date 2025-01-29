@@ -1,0 +1,21 @@
+[package]
+name = "compviz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.95"
+humansize = { version = "2.1.3", features = ["impl_style"] }
+libc = "0.2.169"
+
+[build-dependencies]
+bindgen = "0.71.1"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+
+[profile.perf]
+inherits = "release"
+debug = true
