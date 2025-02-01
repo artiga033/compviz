@@ -1,10 +1,13 @@
 use core::fmt;
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt::Display,
     fs::{self, File},
+    ops::AddAssign,
     os::unix::fs::MetadataExt,
     path::Path,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::anyhow;
@@ -39,11 +42,25 @@ impl fmt::Display for CompressionType {
 #[derive(Debug, Default)]
 struct Statistic {
     pub extent_info: HashMap<CompressionType, ExtentInfo>,
-    pub seen_extents: HashSet<u64>,
     pub n_files: usize,
     pub n_extents: usize,
     pub n_refs: usize,
     pub n_inline: usize,
+}
+
+impl AddAssign<&Statistic> for Statistic {
+    fn add_assign(&mut self, rhs: &Statistic) {
+        self.n_files += rhs.n_files;
+        self.n_extents += rhs.n_extents;
+        self.n_refs += rhs.n_refs;
+        self.n_inline += rhs.n_inline;
+        for (compression, info) in rhs.extent_info.iter() {
+            let self_info = self.extent_info.entry(*compression).or_default();
+            self_info.disk_bytes += info.disk_bytes;
+            self_info.uncompressed_bytes += info.uncompressed_bytes;
+            self_info.referenced_bytes += info.referenced_bytes;
+        }
+    }
 }
 impl Statistic {
     pub fn table(&self) -> impl Display + '_ {
@@ -120,22 +137,18 @@ impl Statistic {
 
 struct FileExtentsEnumerator {
     args: btrfs::btrfs_ioctl_search_args_v2_64KB,
+    seen_extents: Arc<Mutex<HashSet<u64>>>,
     stat: Statistic,
 }
 impl FileExtentsEnumerator {
-    pub fn new() -> Self {
+    pub fn with_shared(seen_extents: Arc<Mutex<HashSet<u64>>>) -> Self {
         Self {
             args: btrfs::btrfs_ioctl_search_args_v2_64KB::new_search_file_extent_data(0),
             stat: Statistic::default(),
+            seen_extents,
         }
     }
-    pub fn enumerate(&mut self, path: impl AsRef<Path>) -> anyhow::Result<&Statistic> {
-        let path = path.as_ref();
-        let metadata = path.metadata()?;
-        self.recursive_work(path, metadata.file_type())?;
-        Ok(&self.stat)
-    }
-    fn recursive_work(
+    pub fn work_on_file(
         &mut self,
         path: impl AsRef<Path>,
         file_type: fs::FileType,
@@ -153,7 +166,7 @@ impl FileExtentsEnumerator {
                     .extent_info
                     .entry(CompressionType(extent.compression()))
                     .or_default();
-                if extent.type_() == btrfs::BtrfsFileExtentType::INLINE {
+                if extent.type_() == btrfs::BtrfsFileExtentType::Inline {
                     info.disk_bytes += extent.disk_num_bytes() as usize;
                     info.uncompressed_bytes += extent.ram_bytes() as usize;
                     info.referenced_bytes += extent.ram_bytes() as usize;
@@ -161,7 +174,12 @@ impl FileExtentsEnumerator {
                     return Ok(());
                 }
                 // okay to unwrap as only INLINE extents will have a None, and we return early
-                if self.stat.seen_extents.insert(extent.disk_bytenr().unwrap()) {
+                if self
+                    .seen_extents
+                    .lock()
+                    .unwrap()
+                    .insert(extent.disk_bytenr().unwrap())
+                {
                     info.disk_bytes += extent.disk_num_bytes() as usize;
                     info.uncompressed_bytes += extent.ram_bytes() as usize;
                     self.stat.n_extents += 1;
@@ -172,16 +190,43 @@ impl FileExtentsEnumerator {
         } else if file_type.is_dir() {
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
-                self.recursive_work(entry.path(), entry.file_type()?)?;
+                let file_type = entry.file_type()?;
+                rayon::spawn(move || {
+                    T_ENUMRATOR.with_borrow_mut(|e| {
+                        if let Err(err) = e.work_on_file(entry.path(), file_type) {
+                            eprintln!("Error: {}", err);
+                        }
+                    })
+                });
             }
         }
         Ok(())
     }
 }
+thread_local! {
+    static T_ENUMRATOR: RefCell<FileExtentsEnumerator> = panic!("thread local enumrator not initialized");
+}
 fn main() -> anyhow::Result<()> {
-    let path = std::env::args().nth(1).ok_or(anyhow!("missing argument"))?;
-    let mut enumerator = FileExtentsEnumerator::new();
-    let stat = enumerator.enumerate(path)?;
-    println!("{}", stat.table());
+    let stat = Mutex::new(Statistic::default());
+    let shared_hashset = Arc::new(Mutex::new(HashSet::new()));
+    rayon::ThreadPoolBuilder::new().build_scoped(
+        |thread| {
+            T_ENUMRATOR.set(FileExtentsEnumerator::with_shared(shared_hashset.clone()));
+            thread.run();
+            T_ENUMRATOR.with_borrow(|e| {
+                *stat.lock().unwrap() += &e.stat;
+            });
+        },
+        |pool| {
+            pool.install(|| -> anyhow::Result<()> {
+                let path = std::env::args()
+                    .nth(1)
+                    .ok_or_else(|| anyhow!("Missing argument"))?;
+                let metadata: fs::Metadata = fs::metadata(&path)?;
+                T_ENUMRATOR.with_borrow_mut(|e| e.work_on_file(path, metadata.file_type()))
+            })
+        },
+    )??;
+    println!("{}", stat.lock().unwrap().table());
     Ok(())
 }

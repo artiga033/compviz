@@ -25,8 +25,9 @@ fn main() {
         // .allowlist_item("btrfs.*")
         .clang_arg("-fretain-comments-from-system-headers")
         .clang_arg("-fparse-all-comments");
-        // Finish the builder and generate the bindings. 
-        let bindings = bindings.generate()
+    // Finish the builder and generate the bindings.
+    let bindings = bindings
+        .generate()
         // Unwrap the Result and panic on failure.
         .expect("Unable to generate bindings");
 

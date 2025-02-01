@@ -8,18 +8,18 @@ use crate::ffi::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BtrfsFileExtentType {
-    INLINE = 0,
-    REGULAR = 1,
-    PREALLOC = 2,
-    UNKNOWN = 255,
+    Inline = 0,
+    Regular = 1,
+    Prealloc = 2,
+    Unknown = 255,
 }
 impl From<u8> for BtrfsFileExtentType {
     fn from(v: u8) -> Self {
         match v {
-            0 => BtrfsFileExtentType::INLINE,
-            1 => BtrfsFileExtentType::REGULAR,
-            2 => BtrfsFileExtentType::PREALLOC,
-            _ => BtrfsFileExtentType::UNKNOWN,
+            0 => BtrfsFileExtentType::Inline,
+            1 => BtrfsFileExtentType::Regular,
+            2 => BtrfsFileExtentType::Prealloc,
+            _ => BtrfsFileExtentType::Unknown,
         }
     }
 }
@@ -63,7 +63,7 @@ impl BtrfsFileExtentItem<'_> {
     #[inline]
     pub fn disk_bytenr(&self) -> Option<u64> {
         match self.type_() {
-            BtrfsFileExtentType::INLINE => None,
+            BtrfsFileExtentType::Inline => None,
             _ => Some(self.ensure_read().read.borrow().unwrap().disk_bytenr),
         }
     }
@@ -72,7 +72,7 @@ impl BtrfsFileExtentItem<'_> {
     /// For inline extent, this is calculated from `metadata length - previous meaningful fields`
     pub fn disk_num_bytes(&self) -> u64 {
         match self.type_() {
-            BtrfsFileExtentType::INLINE => (self.len - Self::INLINE_DATA_OFFSET) as u64,
+            BtrfsFileExtentType::Inline => (self.len - Self::INLINE_DATA_OFFSET) as u64,
             _ => self.ensure_read().read.borrow().unwrap().disk_num_bytes,
         }
     }
@@ -81,7 +81,7 @@ impl BtrfsFileExtentItem<'_> {
     #[inline]
     pub fn offset(&self) -> Option<u64> {
         match self.type_() {
-            BtrfsFileExtentType::INLINE => None,
+            BtrfsFileExtentType::Inline => None,
             _ => Some(self.ensure_read().read.borrow().unwrap().offset),
         }
     }
@@ -90,7 +90,7 @@ impl BtrfsFileExtentItem<'_> {
     #[inline]
     pub fn num_bytes(&self) -> u64 {
         match self.type_() {
-            BtrfsFileExtentType::INLINE => self.ram_bytes(),
+            BtrfsFileExtentType::Inline => self.ram_bytes(),
             _ => self.ensure_read().read.borrow().unwrap().num_bytes,
         }
     }
