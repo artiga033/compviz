@@ -9,7 +9,6 @@ use std::{
     os::unix::fs::MetadataExt,
     path::Path,
     sync::{Arc, Mutex},
-    usize,
 };
 
 use anyhow::anyhow;
