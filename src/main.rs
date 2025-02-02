@@ -2,12 +2,14 @@ use core::fmt;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    env,
     fmt::Display,
     fs::{self, File},
     ops::AddAssign,
     os::unix::fs::MetadataExt,
     path::Path,
     sync::{Arc, Mutex},
+    usize,
 };
 
 use anyhow::anyhow;
@@ -209,24 +211,39 @@ thread_local! {
 fn main() -> anyhow::Result<()> {
     let stat = Mutex::new(Statistic::default());
     let shared_hashset = Arc::new(Mutex::new(HashSet::new()));
-    rayon::ThreadPoolBuilder::new().build_scoped(
-        |thread| {
-            T_ENUMRATOR.set(FileExtentsEnumerator::with_shared(shared_hashset.clone()));
-            thread.run();
-            T_ENUMRATOR.with_borrow(|e| {
-                *stat.lock().unwrap() += &e.stat;
-            });
-        },
-        |pool| {
-            pool.install(|| -> anyhow::Result<()> {
-                let path = std::env::args()
-                    .nth(1)
-                    .ok_or_else(|| anyhow!("Missing argument"))?;
-                let metadata: fs::Metadata = fs::metadata(&path)?;
-                T_ENUMRATOR.with_borrow_mut(|e| e.work_on_file(path, metadata.file_type()))
-            })
-        },
-    )??;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(
+            if let Ok(Ok(env_var)) = env::var("RAYON_NUM_THREADS").map(|s| s.parse()) {
+                env_var
+            } else {
+                let cpus = std::thread::available_parallelism()
+                    .map(|x| x.get())
+                    .unwrap_or(1);
+                match cpus {
+                    0..=6 => cpus,
+                    24..usize::MAX => 24,
+                    _ => cpus / 2 + 1,
+                }
+            },
+        )
+        .build_scoped(
+            |thread| {
+                T_ENUMRATOR.set(FileExtentsEnumerator::with_shared(shared_hashset.clone()));
+                thread.run();
+                T_ENUMRATOR.with_borrow(|e| {
+                    *stat.lock().unwrap() += &e.stat;
+                });
+            },
+            |pool| {
+                pool.install(|| -> anyhow::Result<()> {
+                    let path = std::env::args()
+                        .nth(1)
+                        .ok_or_else(|| anyhow!("Missing argument"))?;
+                    let metadata: fs::Metadata = fs::metadata(&path)?;
+                    T_ENUMRATOR.with_borrow_mut(|e| e.work_on_file(path, metadata.file_type()))
+                })
+            },
+        )??;
     println!("{}", stat.lock().unwrap().table());
     Ok(())
 }
