@@ -30,6 +30,11 @@ impl ExtentInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CompressionType(u8);
+impl CompressionType {
+    pub fn iter() -> impl Iterator<Item = CompressionType> {
+        (u8::MIN..u8::MAX).map(CompressionType)
+    }
+}
 impl fmt::Display for CompressionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -116,7 +121,10 @@ impl Statistic {
                     total.uncompressed_bytes.format_size(BINARY),
                     total.referenced_bytes.format_size(BINARY)
                 );
-                for (compression, info) in self.0.extent_info.iter() {
+                for compression in CompressionType::iter() {
+                    let Some(info) = self.0.extent_info.get(&compression) else {
+                        continue;
+                    };
                     let percent = format!("{:.2}%", info.compression_percent());
                     print_table!(
                         f,
