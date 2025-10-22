@@ -22,6 +22,11 @@ struct ExtentInfo {
     pub uncompressed_bytes: usize,
     pub referenced_bytes: usize,
 }
+impl ExtentInfo {
+    pub fn compression_percent(&self) -> f64 {
+        (self.disk_bytes as f64 / self.uncompressed_bytes as f64) * 100.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CompressionType(u8);
@@ -101,10 +106,7 @@ impl Statistic {
                             acc
                         });
 
-                let percent = format!(
-                    "{:.2}%",
-                    (total.disk_bytes as f64 / total.referenced_bytes as f64) * 100.0
-                );
+                let percent = format!("{:.2}%", total.compression_percent());
 
                 print_table!(
                     f,
@@ -115,10 +117,7 @@ impl Statistic {
                     total.referenced_bytes.format_size(BINARY)
                 );
                 for (compression, info) in self.0.extent_info.iter() {
-                    let percent = format!(
-                        "{:.2}%",
-                        (info.disk_bytes as f64 / info.referenced_bytes as f64) * 100.0
-                    );
+                    let percent = format!("{:.2}%", info.compression_percent());
                     print_table!(
                         f,
                         compression.to_string(),
